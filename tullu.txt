@@ -1,0 +1,191 @@
+import streamlit as st
+import pandas as pd
+from utils import get_download_links
+
+def initialize_test_case_state():
+    """Initialize test case related session state variables"""
+    if 'test_case_entries' not in st.session_state:
+        st.session_state['test_case_entries'] = []
+    if 'delete_index' not in st.session_state:
+        st.session_state['delete_index'] = None
+
+def add_test_case(query, answer, page_number=None, document_id=None, section_name=None):
+    """Add a new test case based on form input"""
+    if query and answer:
+        # Create test case entry with required and optional fields
+        test_case = {
+            'query': query,
+            'actual_response': answer
+        }
+        
+        # Add optional fields if they have values
+        if page_number:
+            test_case['page_number'] = page_number
+        if document_id:
+            test_case['document_id'] = document_id
+        if section_name:
+            test_case['section_name'] = section_name
+        
+        # Add to session state
+        st.session_state['test_case_entries'].append(test_case)
+        
+        # Update the test cases dataframe
+        if st.session_state['test_case_entries']:
+            st.session_state['test_cases_df'] = pd.DataFrame(st.session_state['test_case_entries'])
+        
+        return True
+    return False
+
+def delete_test_case():
+    """Delete a test case at the specified index"""
+    if st.session_state['delete_index'] is not None:
+        index = st.session_state['delete_index']
+        if 0 <= index < len(st.session_state['test_case_entries']):
+            st.session_state['test_case_entries'].pop(index)
+            st.session_state['delete_index'] = None
+            
+            if st.session_state['test_case_entries']:
+                st.session_state['test_cases_df'] = pd.DataFrame(st.session_state['test_case_entries'])
+            else:
+                st.session_state['test_cases_df'] = None
+            
+            st.success("Test case deleted successfully!")
+            st.rerun()
+        else:
+            st.error(f"Invalid test case index: {index+1}")
+            st.session_state['delete_index'] = None
+
+def reset_test_cases():
+    """Reset all test cases"""
+    st.session_state['test_case_entries'] = []
+    st.session_state['test_cases_df'] = None
+    st.success("All test cases have been reset.")
+    st.rerun()
+
+def render_test_case_creator():
+    """Render the test case creation interface using Streamlit Forms"""
+    # Initialize state
+    initialize_test_case_state()
+    
+    # Test case creation interface
+    st.subheader("Create Test Cases")
+    
+    # Create a form for test case submission
+    with st.form(key="test_case_form"):
+        # Required fields in a card-like container
+        st.markdown("### Required Fields")
+        col1, col2 = st.columns(2)
+        with col1:
+            query = st.text_area("Query", height=80, 
+                       placeholder="Enter your query here...",
+                       help="Enter the test query you want to evaluate")
+        with col2:
+            answer = st.text_area("Expected Answer", height=80,
+                       placeholder="Enter the expected answer here...",
+                       help="Enter the expected response for this query")
+        
+        # Optional fields in columns with expander
+        with st.expander("Optional Fields", expanded=False):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                page_number = st.number_input("Page Number", min_value=0, 
+                                            help="Optional: Specify page number if applicable")
+            with col2:
+                document_id = st.text_input("Document ID", 
+                                          placeholder="Enter document identifier",
+                                          help="Optional: Enter document ID if applicable")
+            with col3:
+                section_name = st.text_input("Section Name", 
+                                           placeholder="Enter section name",
+                                           help="Optional: Enter section name if applicable")
+        
+        # Submit button at the bottom of the form
+        submitted = st.form_submit_button("Add Test Case", use_container_width=True, 
+                                         type="primary")
+        
+        # Process form submission
+        if submitted:
+            # Use zero for page_number if nothing entered
+            page_num_val = page_number if page_number > 0 else None
+            
+            if add_test_case(query.strip(), answer.strip(), 
+                           page_num_val, 
+                           document_id.strip() if document_id else None,
+                           section_name.strip() if section_name else None):
+                st.success("Test case added successfully!")
+            else:
+                st.error("Please enter both query and expected answer.")
+    
+    # Actions outside the form
+    if st.session_state['test_case_entries']:
+        col1, col2 = st.columns([3, 1])
+        with col2:
+            if st.button("Reset All Test Cases", use_container_width=True):
+                reset_test_cases()
+    
+    # Display existing test cases if any
+    if st.session_state['test_case_entries']:
+        st.markdown("---")
+        st.subheader(f"Test Cases ({len(st.session_state['test_case_entries'])})")
+        
+        # Display download option
+        col1, col2 = st.columns([3, 1])
+        with col2:
+            if st.session_state['test_cases_df'] is not None:
+                st.markdown(get_download_links(st.session_state['test_cases_df'], 
+                                             "created_test_cases"), 
+                           unsafe_allow_html=True)
+        
+        # Display test cases in a dataframe with delete buttons
+        test_cases_view_df = pd.DataFrame(st.session_state['test_case_entries'])
+        
+        # Check if we have any of the optional fields
+        has_optional_fields = any(field in test_cases_view_df.columns 
+                                 for field in ['page_number', 'document_id', 'section_name'])
+        
+                # Add index column starting from 1
+        test_cases_view_df = test_cases_view_df.reset_index().rename(columns={'index': '#'})
+        test_cases_view_df['#'] = test_cases_view_df['#'] + 1
+        
+        # Show available fields in nice order
+        columns_to_display = ['#']
+        columns_to_display.extend(['query', 'actual_response'])
+        
+        if 'document_id' in test_cases_view_df.columns:
+            columns_to_display.append('document_id')
+        if 'page_number' in test_cases_view_df.columns:
+            columns_to_display.append('page_number')
+        if 'section_name' in test_cases_view_df.columns:
+            columns_to_display.append('section_name')
+        
+        # Add Actions column for compatibility with older code
+        test_cases_view_df['Actions'] = ['Delete' for _ in range(len(test_cases_view_df))]
+        columns_to_display.append('Actions')
+        
+        # Display with proper columns
+        with st.expander("View All Test Cases", expanded=True):
+            # Use standard dataframe instead of data_editor with ButtonColumn
+            st.dataframe(
+                test_cases_view_df[columns_to_display[:-1]],  # Exclude Actions column
+                hide_index=True,
+                use_container_width=True
+            )
+            
+            # Add delete functionality with separate buttons
+            st.subheader("Delete Test Case")
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                delete_index = st.number_input(
+                    "Enter test case number to delete:", 
+                    min_value=1, 
+                    max_value=len(test_cases_view_df) if len(test_cases_view_df) > 0 else 1,
+                    help="Enter the number (#) of the test case you want to delete"
+                )
+            with col2:
+                if st.button("Delete", use_container_width=True):
+                    # Convert from 1-based visible index to 0-based internal index
+                    st.session_state['delete_index'] = int(delete_index) - 1
+                    delete_test_case()
+    
+    # Return whether test cases are available
+    return st.session_state['test_cases_df'] is not None
